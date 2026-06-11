@@ -1,6 +1,36 @@
-use std::{io::{BufRead, BufReader, Read}, net::{Shutdown, TcpListener, TcpStream}, sync::LazyLock};
+use std::{fmt::format, io::{BufRead, BufReader, Read, Write}, net::{Shutdown, TcpListener, TcpStream}, sync::LazyLock};
 use anyhow::{Context, Ok, Result};
 use std::collections::HashMap;
+
+enum StatusCode {
+    Ok,
+    BadRequest,
+    NotFound,
+    MethodNotAllowed,
+    InternalServerError,
+}
+
+impl StatusCode {
+    fn status_line(&self) -> &'static [u8] {
+        match self {
+            StatusCode::Ok => b"HTTP/1.1 200 OK\r\n",
+            StatusCode::BadRequest => b"HTTP/1.1 400 Bad Request\r\n",
+            StatusCode::NotFound => b"HTTP/1.1 404 Not Found\r\n",
+            StatusCode::MethodNotAllowed => b"HTTP/1.1 405 Method Not Allowed\r\n",
+            StatusCode::InternalServerError => b"HTTP/1.1 500 Internal Server Error\r\n",
+        }
+    }
+
+    fn code(&self) -> u16 {
+        match self {
+            StatusCode::Ok => 200,
+            StatusCode::BadRequest => 400,
+            StatusCode::NotFound => 404,
+            StatusCode::MethodNotAllowed => 405,
+            StatusCode::InternalServerError => 500,
+        }
+    }
+}
 
 #[derive(Default, Debug)]
 struct HTTPRequest {
@@ -8,16 +38,17 @@ struct HTTPRequest {
     path:   String,
     version:    String,
     headers:    HashMap<String, String>,
-    body:      Vec<u8> 
+    body:      Vec<u8>,
+    returns_content: bool
 }
 
 struct HTTPResponse {
-    status_line: Vec<u8>,
+    status_line: StatusCode,
     headers:    HashMap<String, String>,
     body:       Vec<u8>
 }
 
-type Handler = fn(&HTTPRequest) -> Result<HTTPResponse>;
+type Handler = fn(HTTPRequest) -> Result<HTTPResponse>;
 
 static GET: LazyLock<HashMap<&str, Handler>> = LazyLock::new(|| { 
     HashMap::from([
@@ -33,26 +64,33 @@ static POST: LazyLock<HashMap<&str, Handler>> = LazyLock::new(|| {
     ])
 });
 
-fn home_handler(req: &HTTPRequest) -> Result<HTTPResponse> {
-
-
-
+fn home_handler(_: HTTPRequest) -> Result<HTTPResponse> {
     Ok(HTTPResponse {
-
+        status_line: StatusCode::Ok,
+        headers: HashMap::new(),
+        body: Vec::from(b"HTTP Server in Rust exercise, nothing exciting here"),
     })
 }
 
-fn hello_handler(req: &HTTPRequest) -> Result<HTTPResponse> {
-
+fn hello_handler(_: HTTPRequest) -> Result<HTTPResponse> {
     Ok(HTTPResponse {
-
+        status_line: StatusCode::Ok,
+        headers: HashMap::new(),
+        body: Vec::from(b"Hello to you too!"),
     })
 }
 
-fn create_user(req: &HTTPRequest) -> Result<HTTPResponse> {
+fn create_user(req: HTTPRequest) -> Result<HTTPResponse> {
+    let body_string = String::from_utf8(req.body)?;
 
+    let split_string = body_string.split_once(":").context("Invalid POST create user body")?;
+    let parsed_name = split_string.1.trim_matches(|c: char| c.is_whitespace() || c == '"' || c == '}');
+    
+    dbg!(parsed_name);
     Ok(HTTPResponse {
-
+        status_line: StatusCode::Ok,
+        headers: HashMap::new(),
+        body: Vec::from(format!("User {} successfully created!", parsed_name)),
     })
 }
 
@@ -86,7 +124,8 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HTTPRequest> {
     }
 
     if let Some(length) = headers.get("Content-Length") {
-        let mut buf = Vec::with_capacity(length.parse().context("Content length is malformed")?);
+        //let mut buf = Vec::with_capacity(length.parse().context("Content length is malformed")?);
+        let mut buf = vec![0u8; length.parse().context("Content length is malformed")?];
         reader.read_exact(&mut buf)?;
 
         body = std::mem::take(&mut buf);
@@ -98,22 +137,56 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HTTPRequest> {
         version,
         headers,
         body,
+        returns_content: true
     })
 
 
 }
 
-fn write_http_response() {
+fn write_http_response(resp: HTTPResponse, stream: &mut TcpStream, returns_content: bool) -> Result<()> {
+    let mut buf: Vec<u8> = Vec::new();
 
+    buf.extend_from_slice(resp.status_line.status_line());
+
+    for (name, value) in &resp.headers {
+        let result = name.to_owned() + ": " + value + "\r\n";
+        buf.extend_from_slice(result.as_bytes());
+    }
+
+    buf.extend_from_slice("\r\n".as_bytes());
+
+    if returns_content {
+        buf.extend_from_slice(&resp.body);
+    }
+
+    stream.write_all(&buf).context("Failure writing HTTP Response")?;
+
+    Ok(())
 }
 
 fn handle_connection(stream: &mut TcpStream) -> Result<()> {
     println!("Client successfully connected!");
 
     let req =    parse_http_request(stream)?;
-    dbg!(&req); 
+    dbg!(&req);
 
+    let returns_content = req.returns_content;
 
+    let mut resp = match req.method.as_str() {
+        "GET" => GET.get(req.path.as_str()).unwrap()(req)?,
+        "POST" => POST.get(req.path.as_str()).unwrap()(req)?,
+        _ => HTTPResponse {
+            status_line: StatusCode::NotFound,
+            headers: HashMap::from([(String::from("Foo"), String::from("Bar"))]),
+            body: vec![],
+        },
+    };
+
+    if resp.body.len() > 0 {
+        resp.headers.insert("Content-Length".to_string(), resp.body.len().to_string());
+    }
+
+    write_http_response(resp, stream, returns_content)?;
 
     stream.shutdown(Shutdown::Both)?;
     Ok(())
