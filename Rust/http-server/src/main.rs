@@ -1,4 +1,4 @@
-use std::{io::{BufRead, BufReader, Read}, net::{Shutdown, TcpListener, TcpStream}};
+use std::{io::{BufRead, BufReader, Read}, net::{Shutdown, TcpListener, TcpStream}, sync::LazyLock};
 use anyhow::{Context, Ok, Result};
 use std::collections::HashMap;
 
@@ -9,6 +9,51 @@ struct HTTPRequest {
     version:    String,
     headers:    HashMap<String, String>,
     body:      Vec<u8> 
+}
+
+struct HTTPResponse {
+    status_line: Vec<u8>,
+    headers:    HashMap<String, String>,
+    body:       Vec<u8>
+}
+
+type Handler = fn(&HTTPRequest) -> Result<HTTPResponse>;
+
+static GET: LazyLock<HashMap<&str, Handler>> = LazyLock::new(|| { 
+    HashMap::from([
+        ("/", home_handler as Handler),
+        ("/hello", hello_handler as Handler),
+    ])
+});
+
+
+static POST: LazyLock<HashMap<&str, Handler>> = LazyLock::new(|| { 
+    HashMap::from([
+        ("/users", create_user as Handler),
+    ])
+});
+
+fn home_handler(req: &HTTPRequest) -> Result<HTTPResponse> {
+
+
+
+    Ok(HTTPResponse {
+
+    })
+}
+
+fn hello_handler(req: &HTTPRequest) -> Result<HTTPResponse> {
+
+    Ok(HTTPResponse {
+
+    })
+}
+
+fn create_user(req: &HTTPRequest) -> Result<HTTPResponse> {
+
+    Ok(HTTPResponse {
+
+    })
 }
 
 fn parse_http_request(stream: &mut TcpStream) -> Result<HTTPRequest> {
@@ -58,16 +103,24 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HTTPRequest> {
 
 }
 
-fn handle_client(stream: &mut TcpStream) -> Result<()> {
+fn write_http_response() {
+
+}
+
+fn handle_connection(stream: &mut TcpStream) -> Result<()> {
     println!("Client successfully connected!");
 
     let req =    parse_http_request(stream)?;
     dbg!(&req); 
-    //println!("{:#?}", req);
+
+
 
     stream.shutdown(Shutdown::Both)?;
     Ok(())
 }
+
+
+
 fn main() -> Result<()>{
     println!("Starting HTTP Server...");
     println!("Waiting for client to connect.");
@@ -75,7 +128,7 @@ fn main() -> Result<()>{
    let listener = TcpListener::bind("127.0.0.1:8080").context("Failed to bind to port 8080")?;
 
     for stream in listener.incoming() {
-        handle_client(&mut stream?)?;
+        handle_connection(&mut stream?)?;
     }
 
     
