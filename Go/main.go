@@ -35,43 +35,37 @@ type HTTPRequest struct {
 }
 
 type HTTPResponse struct {
-	statusLine 	[]byte
+	StatusLine 	[]byte
 	Headers 	map[string]string
 	Body		[]byte
 }
 
-type handler func([]byte) *HTTPResponse
+type handler func(*HTTPRequest) *HTTPResponse
 
-func homeHandler(body []byte) *HTTPResponse {
-	response := &HTTPResponse{
+func homeHandler(_ *HTTPRequest) *HTTPResponse {
+	return &HTTPResponse{
+		StatusLine: OK,
 		Headers: make(map[string]string),
+		Body: []byte("HTTP Server in GoLang exercise, nothing exciting here"),
 	}
-	
-	response.statusLine = OK
-	response.Body = []byte("HTTP Server in GoLang exercise, nothing exciting here")
-
-	return response
 }
 
-func helloHandler(body []byte) *HTTPResponse {
-	response := &HTTPResponse{
+func helloHandler(_ *HTTPRequest) *HTTPResponse {
+	return &HTTPResponse{
+		StatusLine: OK,
 		Headers: make(map[string]string),
+		Body: []byte("Hello to you too!"),
 	}
-
-	response.statusLine = OK
-	response.Body = []byte("Hello to you too!")
-
-	return response
 }
 
-func createUserHandler(body []byte) *HTTPResponse {
+func createUserHandler(req *HTTPRequest) *HTTPResponse {
 	response := &HTTPResponse{
 		Headers: make(map[string]string),
 	}
 
-	response.statusLine = OK
+	response.StatusLine = OK
 
-	userData := strings.Split(string(bytes.Trim(body, "{\"}")), ":")
+	userData := strings.Split(string(bytes.Trim(req.Body, "{\"}")), ":")
 	name := strings.Trim(userData[1], " \"")
 
 	response.Body = fmt.Appendf(response.Body, "User %v successfully created!", name)
@@ -144,7 +138,7 @@ func ParseHTTPRequest(c net.Conn) (*HTTPRequest, error) {
 func WriteHTTPResponse(c net.Conn, responseData *HTTPResponse, returnsContent bool) {
 	var response []byte
 
-	response = append(response, responseData.statusLine...)
+	response = append(response, responseData.StatusLine...)
 
 	for k, v := range responseData.Headers {
 		response = append(response, (k + v)...)
@@ -183,7 +177,7 @@ func handleConnection(c net.Conn) {
 		
 	}
 
-	response  := hf(req.Body)
+	response  := hf(req)
 	responseBodyLen := len(response.Body)
 
 	if responseBodyLen > 0 {
