@@ -38,8 +38,7 @@ struct HTTPRequest {
     path:   String,
     version:    String,
     headers:    HashMap<String, String>,
-    body:      Vec<u8>,
-    returns_content: bool
+    body:      Vec<u8>
 }
 
 struct HTTPResponse {
@@ -77,6 +76,14 @@ fn hello_handler(_: HTTPRequest) -> Result<HTTPResponse> {
         status_line: StatusCode::Ok,
         headers: HashMap::new(),
         body: Vec::from(b"Hello to you too!"),
+    })
+}
+
+fn invalid_path_handler() -> Result<HTTPResponse> {
+    Ok(HTTPResponse {
+        status_line: StatusCode::NotFound,
+        headers: HashMap::new(),
+        body: Vec::from(b"Invalid path provided"),
     })
 }
 
@@ -136,8 +143,7 @@ fn parse_http_request(stream: &mut TcpStream) -> Result<HTTPRequest> {
         path,
         version,
         headers,
-        body,
-        returns_content: true
+        body
     })
 
 
@@ -170,19 +176,29 @@ fn handle_connection(stream: &mut TcpStream) -> Result<()> {
     let req =    parse_http_request(stream)?;
     dbg!(&req);
 
-    let returns_content = req.returns_content;
 
     let mut resp = match req.method.as_str() {
-        "GET" => GET.get(req.path.as_str()).unwrap()(req)?,
-        "POST" => POST.get(req.path.as_str()).unwrap()(req)?,
-        _ => HTTPResponse {
-            status_line: StatusCode::NotFound,
-            headers: HashMap::from([(String::from("Foo"), String::from("Bar"))]),
-            body: vec![],
-        },
+        "GET" => {
+            if let Some(handler) = GET.get(req.path.as_str()) {
+                handler(req)?
+            } else {
+                invalid_path_handler()? 
+            }
+        }
+        "POST" => {
+            if let Some(handler) = POST.get(req.path.as_str()) {
+                handler(req)?
+            } else {
+                invalid_path_handler()?
+            }
+        }
+        _ => invalid_path_handler()?,
     };
 
+    let mut returns_content = false;
+
     if resp.body.len() > 0 {
+        returns_content = true;
         resp.headers.insert("Content-Length".to_string(), resp.body.len().to_string());
     }
 
