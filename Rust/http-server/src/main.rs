@@ -170,6 +170,14 @@ fn write_http_response(resp: HTTPResponse, stream: &mut TcpStream, returns_conte
     Ok(())
 }
 
+fn dispatch(table: &LazyLock<HashMap<&str, Handler>>, req: HTTPRequest) -> Result<HTTPResponse> {
+    if let Some(handler) = table.get(req.path.as_str()) {
+        handler(req)
+    } else {
+        invalid_path_handler()
+    }
+}
+
 fn handle_connection(stream: &mut TcpStream) -> Result<()> {
     println!("Client successfully connected!");
 
@@ -179,18 +187,10 @@ fn handle_connection(stream: &mut TcpStream) -> Result<()> {
 
     let mut resp = match req.method.as_str() {
         "GET" => {
-            if let Some(handler) = GET.get(req.path.as_str()) {
-                handler(req)?
-            } else {
-                invalid_path_handler()? 
-            }
+            dispatch(&GET, req)?
         }
         "POST" => {
-            if let Some(handler) = POST.get(req.path.as_str()) {
-                handler(req)?
-            } else {
-                invalid_path_handler()?
-            }
+            dispatch(&POST, req)?
         }
         _ => invalid_path_handler()?,
     };
