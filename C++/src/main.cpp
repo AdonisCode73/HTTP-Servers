@@ -201,7 +201,7 @@ void handleConnection(Socket &connection) {
 
     if (resp.body.size() > 0) {
         returnsContent = true;
-        resp.headers["Content-Length"] = resp.body.size();
+        resp.headers["Content-Length"] = std::to_string(resp.body.size());
     }
 
     writeHTTPResponse(resp, connection, returnsContent);
