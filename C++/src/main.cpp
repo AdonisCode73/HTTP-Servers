@@ -1,7 +1,7 @@
+#include <asm-generic/socket.h>
 #include <cerrno>
 #include <charconv>
 #include <cstddef>
-#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -10,14 +10,16 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <netdb.h>
 #include <unordered_map>
 #include <system_error>
-#include <vector>
 #include <memory>
+#include <format>
+#include <algorithm>
 
 #include "Socket.h"
 #include "BufferedReader.h"
@@ -35,14 +37,16 @@ struct HTTPRequest {
     std::string path;
     std::string version;
     std::unordered_map<std::string, std::string> headers;
-    std::vector<std::byte> body;
+    std::string body;
 };
 
 struct HTTPResponse {
     StatusCode statusCode;
     std::unordered_map<std::string, std::string> headers;
-    std::vector<std::byte> body;
+    std::string body;
 };
+
+
 
 HTTPResponse homeHandler(const HTTPRequest&);
 HTTPResponse helloHandler(const HTTPRequest&);
@@ -51,57 +55,74 @@ HTTPResponse createUser(const HTTPRequest&);
 
 using Handler = HTTPResponse (*)(const HTTPRequest&);
 
-const std::unordered_map<std::string, std::unordered_map<std::string, Handler>> MethodHandlers {
-    {
+const std::unordered_map<std::string, std::unordered_map<std::string, Handler>> MethodHandlers {{
         "GET", {
-            {
-                "/", homeHandler
-            },
-            {
-                "/hello", helloHandler
-            }
+            {   "/", homeHandler    },
+            {   "/hello", helloHandler  }
         }},
     {
         "POST", {
-            {
-                "/users", createUser
-            }
+                {   "/users", createUser    }
         }},
 };
 
-HTTPResponse homeHandler(const HTTPRequest& req) {
+const std::unordered_map<StatusCode, std::string_view> StatusLineResponses {
+    
+    {   StatusCode::Ok,                     "HTTP/1.1 200 OK\r\n"   },
+    {   StatusCode::BadRequest,             "HTTP/1.1 400 Bad Request\r\n"  },
+    {   StatusCode::NotFound,               "HTTP/1.1 404 Not Found\r\n"  },
+    {   StatusCode::MethodNotAllowed,       "HTTP/1.1 405 Method Not Allowed\r\n" },
+    {   StatusCode::InternalServerError,   "HTTP/1.1 500 Internal Server Error\r\n"  }
+};
+
+HTTPResponse homeHandler(const HTTPRequest& _) {
     return HTTPResponse {
         .statusCode = StatusCode::Ok,
         .headers = std::unordered_map<std::string, std::string>{},
-        .body = std::vector<std::byte>{std::byte{0x36}}
+        .body = "HTTP server in C++ exercise, nothing exciting here"
     };
 }
 
-HTTPResponse helloHandler(const HTTPRequest& req) {
-    return HTTPResponse{};
-    /*return HTTPResponse {
+HTTPResponse helloHandler(const HTTPRequest& _) {
+    return HTTPResponse {
         .statusCode = StatusCode::Ok,
-        .headers = std::map<std::string, std::string>{},
-        .body = std::vector<std::byte>{}
-    };*/
+        .headers = std::unordered_map<std::string, std::string>{},
+        .body = "Hello to you too!"
+    };
 }
 
-HTTPResponse invalidPathHandler(const HTTPRequest& req) {
-    return HTTPResponse{};
-    /*return HTTPResponse {
+HTTPResponse invalidPathHandler(const HTTPRequest& _) {
+    return HTTPResponse {
         .statusCode = StatusCode::Ok,
-        .headers = std::map<std::string, std::string>{},
-        .body = std::vector<std::byte>{}
-    };*/
+        .headers = std::unordered_map<std::string, std::string>{},
+        .body = "Invald path provided"
+    };
 }
 
 HTTPResponse createUser(const HTTPRequest& req) {
-    return HTTPResponse{};
-    /*return HTTPResponse {
+    std::string_view body = req.body;
+
+    std::size_t colon = body.find(":");
+    if (colon == std::string::npos) {
+        throw std::runtime_error("Invalid syntax on POST create user body");
+    }
+
+    std::string_view value = body.substr(colon + 1);
+
+    auto isJunk = [](char c) {
+        return c == ' ' || c == '"' || c == '{' || c == '}';
+    };
+
+    while (!value.empty() && isJunk(value.front()))  { value.remove_prefix(1);  }
+    while (!value.empty() && isJunk(value.back()))   { value.remove_suffix(1);  } 
+
+    auto response = std::format("User {} created successfully", value);
+
+    return HTTPResponse {
         .statusCode = StatusCode::Ok,
-        .headers = std::map<std::string, std::string>{},
-        .body = std::vector<std::byte>{}
-    };*/
+        .headers = std::unordered_map<std::string, std::string>{},
+        .body = response 
+    };
 }
 
 Socket getSocket() {
@@ -124,6 +145,12 @@ Socket getSocket() {
 
         Socket sock{fd};
 
+       int yes = 1;
+
+        if (setsockopt(sock.get_fd(), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+            throw std::system_error(errno, std::system_category(), "setsockopt(REUSEADDR)");
+        }
+
         if (bind(sock.get_fd(), p->ai_addr, p->ai_addrlen) == 0) {
             return sock;
         }
@@ -143,7 +170,7 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
 
     version = version.substr(0, '\n');
     std::unordered_map<std::string, std::string> headers{};
-    std::vector<std::byte> body{};
+    std::string body;
 
     while (true) {
         line.clear();
@@ -152,6 +179,9 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
         if (line == "\r\n") {
             break;
         }
+
+        const auto noSpaceEnd = std::remove(line.begin(), line.end(), ' ');
+        line.erase(noSpaceEnd, line.end());
 
         auto colon = line.find(":");
         if (colon == std::string::npos) {
@@ -169,8 +199,9 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
         if (ec != std::errc{}){
             throw std::runtime_error("Invalid Content-Length");
         }
-        
-        std::vector<std::byte> body = reader.read_exact(length);
+       
+        std::cout << length << std::endl;
+        body = reader.read_exact(length);
     }
 
     return HTTPRequest {
@@ -183,7 +214,21 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
 }
 
 void writeHTTPResponse(const HTTPResponse& resp, Socket& connection, bool returnsContent) {
+   
+    std::string_view statusLine = StatusLineResponses.at(resp.statusCode);
+    send(connection.get_fd(), statusLine.data(), statusLine.size(), 0);
 
+    for (auto& [name, value] : resp.headers) {
+        std::string msg = name + ": " + value + "\r\n";
+        send(connection.get_fd(), msg.data(), msg.size(), 0);
+    }
+
+    std::string end = "\r\n";
+    send(connection.get_fd(), end.data(), end.size(), 0);
+
+    if (returnsContent) {
+        send(connection.get_fd(), resp.body.data(), resp.body.size(), 0);
+    }
 }
 
 void handleConnection(Socket &connection) {

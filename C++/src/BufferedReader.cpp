@@ -8,6 +8,8 @@
 #include <sys/socket.h>
 #include <cstring>
 
+#include <iostream>
+
 std::string BufferedReader::readLine(){
     std::string line;
 
@@ -34,8 +36,8 @@ std::string BufferedReader::readLine(){
     return line;
 }
 
-std::vector<std::byte> BufferedReader::read_exact(const size_t  n) {
-    std::vector<std::byte> result(n);
+std::string BufferedReader::read_exact(const size_t  n) {
+    std::string result(n, '\0');
     size_t filled = 0;
 
     while (filled < n) {
@@ -50,6 +52,8 @@ std::vector<std::byte> BufferedReader::read_exact(const size_t  n) {
         size_t available = m_writePos - m_readPos;
         size_t needed = n - filled;
         size_t chunk = std::min(available, needed);
+
+        std::cout << result << std::endl;
 
         std::memcpy(result.data() + filled, m_buffer.data() + m_readPos, chunk);
 
