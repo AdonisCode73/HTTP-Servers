@@ -14,7 +14,7 @@
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <netdb.h>
-#include <map>
+#include <unordered_map>
 #include <system_error>
 #include <vector>
 #include <memory>
@@ -22,14 +22,87 @@
 #include "Socket.h"
 #include "BufferedReader.h"
 
+enum class StatusCode {
+    Ok,
+    BadRequest,
+    NotFound,
+    MethodNotAllowed,
+    InternalServerError
+};
+
 struct HTTPRequest {
     std::string method;
     std::string path;
     std::string version;
-    std::map<std::string, std::string> headers;
+    std::unordered_map<std::string, std::string> headers;
     std::vector<std::byte> body;
 };
 
+struct HTTPResponse {
+    StatusCode statusCode;
+    std::unordered_map<std::string, std::string> headers;
+    std::vector<std::byte> body;
+};
+
+HTTPResponse homeHandler(const HTTPRequest&);
+HTTPResponse helloHandler(const HTTPRequest&);
+HTTPResponse invalidPathHandler(const HTTPRequest&);
+HTTPResponse createUser(const HTTPRequest&);
+
+using Handler = HTTPResponse (*)(const HTTPRequest&);
+
+const std::unordered_map<std::string, std::unordered_map<std::string, Handler>> MethodHandlers {
+    {
+        "GET", {
+            {
+                "/", homeHandler
+            },
+            {
+                "/hello", helloHandler
+            }
+        }},
+    {
+        "POST", {
+            {
+                "/users", createUser
+            }
+        }},
+};
+
+HTTPResponse homeHandler(const HTTPRequest& req) {
+    return HTTPResponse {
+        .statusCode = StatusCode::Ok,
+        .headers = std::unordered_map<std::string, std::string>{},
+        .body = std::vector<std::byte>{std::byte{0x36}}
+    };
+}
+
+HTTPResponse helloHandler(const HTTPRequest& req) {
+    return HTTPResponse{};
+    /*return HTTPResponse {
+        .statusCode = StatusCode::Ok,
+        .headers = std::map<std::string, std::string>{},
+        .body = std::vector<std::byte>{}
+    };*/
+}
+
+HTTPResponse invalidPathHandler(const HTTPRequest& req) {
+    return HTTPResponse{};
+    /*return HTTPResponse {
+        .statusCode = StatusCode::Ok,
+        .headers = std::map<std::string, std::string>{},
+        .body = std::vector<std::byte>{}
+    };*/
+}
+
+HTTPResponse createUser(const HTTPRequest& req) {
+    return HTTPResponse{};
+    /*return HTTPResponse {
+        .statusCode = StatusCode::Ok,
+        .headers = std::map<std::string, std::string>{},
+        .body = std::vector<std::byte>{}
+    };*/
+}
 
 Socket getSocket() {
 
@@ -69,8 +142,7 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
     requestLine >> method >> path >> version;
 
     version = version.substr(0, '\n');
-
-    std::map<std::string, std::string> headers{};
+    std::unordered_map<std::string, std::string> headers{};
     std::vector<std::byte> body{};
 
     while (true) {
@@ -110,10 +182,29 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
     };
 }
 
+void writeHTTPResponse(const HTTPResponse& resp, Socket& connection, bool returnsContent) {
+
+}
+
 void handleConnection(Socket &connection) {
     std::cout << "Client successfully connected!" << std::endl;
 
     HTTPRequest req = parseHTTPRequest(connection);
+
+    Handler hf = MethodHandlers.at(req.method).at(req.path);
+    if (hf == nullptr) {
+        hf = invalidPathHandler;
+    }
+    HTTPResponse resp = hf(req);
+
+    bool returnsContent = false;
+
+    if (resp.body.size() > 0) {
+        returnsContent = true;
+        resp.headers["Content-Length"] = resp.body.size();
+    }
+
+    writeHTTPResponse(resp, connection, returnsContent);
 } 
 
 int main (int argc, char *argv[]) {
