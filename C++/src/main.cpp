@@ -1,4 +1,5 @@
 #include <cerrno>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -6,6 +7,7 @@
 #include <exception>
 #include <iostream>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -60,16 +62,52 @@ Socket getSocket() {
 HTTPRequest parseHTTPRequest(Socket &connection) {
     BufferedReader reader(connection, 8192);
 
-    std::cout << reader.readLine() << std::endl;
+    std::string line = reader.readLine();
+    std::istringstream requestLine(line);
+    std::string method, path, version;
 
-    return HTTPRequest{};
-    /*return HTTPRequest {
-        .method = "foo",
-        .path = "foo",
-        .version = "foo",
-        .headers = {std::string("foo"), std::string("bar")},
-        .body = {std::byte(13)}
-    };*/
+    requestLine >> method >> path >> version;
+
+    version = version.substr(0, '\n');
+
+    std::map<std::string, std::string> headers{};
+    std::vector<std::byte> body{};
+
+    while (true) {
+        line.clear();
+        line = reader.readLine();
+
+        if (line == "\r\n") {
+            break;
+        }
+
+        auto colon = line.find(":");
+        if (colon == std::string::npos) {
+            throw std::runtime_error(std::string{"Failure parsing header, no colon :"});
+        }
+        headers[line.substr(0, colon)] = line.substr(colon + 1);
+    }
+
+    if (headers.contains("Content-Length")) {
+        std::string& lengthString = headers["Content-Length"];
+        size_t length = 0;
+
+        auto [ptr, ec] = std::from_chars(lengthString.data(), lengthString.data() + lengthString.size(), length);
+
+        if (ec != std::errc{}){
+            throw std::runtime_error("Invalid Content-Length");
+        }
+        
+        std::vector<std::byte> body = reader.read_exact(length);
+    }
+
+    return HTTPRequest {
+        .method = method,
+        .path = path,
+        .version = version,
+        .headers = headers,
+        .body = body
+    };
 }
 
 void handleConnection(Socket &connection) {
