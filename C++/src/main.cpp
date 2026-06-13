@@ -1,13 +1,11 @@
 #include <asm-generic/socket.h>
 #include <cerrno>
-#include <charconv>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <iostream>
 #include <ostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -17,12 +15,14 @@
 #include <netdb.h>
 #include <unordered_map>
 #include <system_error>
-#include <memory>
 #include <format>
+#include <sstream>
 #include <algorithm>
 
-#include "Socket.h"
-#include "BufferedReader.h"
+#include "adonis/net/socket.h"
+#include "adonis/net/bufferedreader.h"
+
+using namespace adonis;
 
 enum class StatusCode {
     Ok,
@@ -125,42 +125,8 @@ HTTPResponse createUser(const HTTPRequest& req) {
     };
 }
 
-Socket getSocket() {
-
-    addrinfo hints{};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-
-    addrinfo* res = nullptr;
-    if (int status = getaddrinfo(NULL, "8080", &hints, &res); status != 0) {
-        throw std::runtime_error(std::string{"getaddrinfo: "} + gai_strerror(status));
-    }
- 
-    std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard{res, freeaddrinfo};
-
-    for (addrinfo* p = res; p != NULL; p = p->ai_next) {
-        int fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (fd < 0) continue;
-
-        Socket sock{fd};
-
-       int yes = 1;
-
-        if (setsockopt(sock.get_fd(), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
-            throw std::system_error(errno, std::system_category(), "setsockopt(REUSEADDR)");
-        }
-
-        if (bind(sock.get_fd(), p->ai_addr, p->ai_addrlen) == 0) {
-            return sock;
-        }
-    }
-
-    throw std::runtime_error("could not bind to any address");
-}
-
-HTTPRequest parseHTTPRequest(Socket &connection) {
-    BufferedReader reader(connection, 8192);
+HTTPRequest parseHTTPRequest(net::socket &connection) {
+    net::BufferedReader reader(connection, 8192);
 
     std::string line = reader.readLine();
     std::istringstream requestLine(line);
@@ -213,7 +179,7 @@ HTTPRequest parseHTTPRequest(Socket &connection) {
     };
 }
 
-void writeHTTPResponse(const HTTPResponse& resp, Socket& connection, bool returnsContent) {
+void writeHTTPResponse(const HTTPResponse& resp, net::socket& connection, bool returnsContent) {
    
     std::string_view statusLine = StatusLineResponses.at(resp.statusCode);
     send(connection.get_fd(), statusLine.data(), statusLine.size(), 0);
@@ -231,7 +197,7 @@ void writeHTTPResponse(const HTTPResponse& resp, Socket& connection, bool return
     }
 }
 
-void handleConnection(Socket &connection) {
+void handleConnection(net::socket &connection) {
     std::cout << "Client successfully connected!" << std::endl;
 
     HTTPRequest req = parseHTTPRequest(connection);
@@ -256,7 +222,13 @@ int main (int argc, char *argv[]) {
     std::cout << "Starting HTTP Server..." << std::endl;
     std::cout << "Waiting for client to connect." << std::endl;
 
-    Socket sock = getSocket();
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    net::socket sock = net::tcp_listener(hints, SOL_SOCKET, SO_REUSEADDR, 1);
 
     if (listen(sock.get_fd(), 1) == -1) {
         throw std::system_error(errno, std::system_category(), "listen");
@@ -267,7 +239,7 @@ int main (int argc, char *argv[]) {
             struct sockaddr_storage theirAddr;
             socklen_t addrSize = sizeof(theirAddr);
 
-            Socket connection(accept(sock.get_fd(), (struct sockaddr *)&theirAddr, &addrSize));
+            net::socket connection(accept(sock.get_fd(), (struct sockaddr *)&theirAddr, &addrSize));
 
             if (connection.get_fd() < 0) {
                 throw std::system_error(errno, std::system_category(), "accept");

@@ -7,9 +7,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 
+    # Using ENV for dev purposes
+    # Replace this with path to local copy of AdonisCode73/cpp-net
+add_subdirectory(
+    $ENV{CPP_NET_PATH}
+    ${CMAKE_BINARY_DIR}/cpp-net-build
+)
+
 add_executable(http_server  ${SOURCES})
 
-target_include_directories(http_server  PRIVATE include)
+target_link_libraries(http_server PRIVATE net)
 
 target_compile_options(http_server  PRIVATE
     -Wall -Wextra -Wpedantic
