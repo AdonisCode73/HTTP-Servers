@@ -228,7 +228,7 @@ int main (int argc, char *argv[]) {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
-    net::socket sock = net::tcp_listener(hints, SOL_SOCKET, SO_REUSEADDR, 1);
+    net::socket sock = net::tcp_listener(hints, std::string(), "8080", SOL_SOCKET, SO_REUSEADDR, 1);
 
     if (listen(sock.get_fd(), 1) == -1) {
         throw std::system_error(errno, std::system_category(), "listen");
