@@ -93,9 +93,17 @@ HTTPResponse helloHandler(const HTTPRequest& _) {
 
 HTTPResponse invalidPathHandler(const HTTPRequest& _) {
     return HTTPResponse {
-        .statusCode = StatusCode::Ok,
+        .statusCode = StatusCode::BadRequest,
         .headers = std::unordered_map<std::string, std::string>{},
         .body = "Invald path provided"
+    };
+}
+
+HTTPResponse make_error(const StatusCode statusCode) {
+    return HTTPResponse {
+        .statusCode = statusCode,
+        .headers = std::unordered_map<std::string, std::string> {},
+        .body = StatusLineResponses.at(statusCode).data()
     };
 }
 
@@ -197,26 +205,41 @@ void writeHTTPResponse(const HTTPResponse& resp, net::socket& connection, bool r
     }
 }
 
-void handleConnection(net::socket &connection) {
-    std::cout << "Client successfully connected!" << std::endl;
-
-    HTTPRequest req = parseHTTPRequest(connection);
-
+HTTPResponse route(HTTPRequest& req) {
     Handler hf = MethodHandlers.at(req.method).at(req.path);
     if (hf == nullptr) {
         hf = invalidPathHandler;
     }
-    HTTPResponse resp = hf(req);
 
-    bool returnsContent = false;
+    return hf(req);
+}
 
-    if (resp.body.size() > 0) {
-        returnsContent = true;
-        resp.headers["Content-Length"] = std::to_string(resp.body.size());
+void handleConnection(net::socket &connection) {
+    std::cout << "Client successfully connected!" << std::endl;
+
+    try {
+        HTTPRequest req = parseHTTPRequest(connection); 
+        HTTPResponse resp = route(req);
+
+        bool returnsContent = false;
+
+        if (resp.body.size() > 0) {
+            returnsContent = true;
+            resp.headers["Content-Length"] = std::to_string(resp.body.size());
+        }
+
+        writeHTTPResponse(resp, connection, returnsContent);
+    } catch (std::exception& e) {
+        std::cerr << "request error" << e.what() << std::endl;
+        writeHTTPResponse(make_error(StatusCode::InternalServerError), connection, true);
     }
+}
 
-    writeHTTPResponse(resp, connection, returnsContent);
-} 
+bool is_transient_err(const std::error_code& ec) {
+    return  ec == std::errc::connection_aborted ||
+            ec == std::errc::interrupted        ||
+            ec == std::errc::too_many_files_open;
+}
 
 int main (int argc, char *argv[]) {
     std::cout << "Starting HTTP Server..." << std::endl;
@@ -229,22 +252,17 @@ int main (int argc, char *argv[]) {
     }
 
     while (true) {
-        try {
-            struct sockaddr_storage theirAddr;
-            socklen_t addrSize = sizeof(theirAddr);
-
-            net::socket connection(accept(sock.get_fd(), (struct sockaddr *)&theirAddr, &addrSize));
-
-            if (connection.get_fd() < 0) {
-                throw std::system_error(errno, std::system_category(), "accept");
+        std::expected<net::socket, std::error_code> connection = net::accept(sock);
+        
+        if (!connection) {
+            if (is_transient_err(connection.error())) {
+                std::cerr << "accept (retrying) " << connection.error().message() << std::endl;
+                continue;
             }
-
-            handleConnection(connection);
-        } catch (const std::system_error &e) {
-            std::cerr << "connection error: " << e.what() << "(errno " << e.code() << ")" << std::endl;
-        } catch (const std::exception &e) {
-            std::cerr << "Unexpected error: " << e.what() << std::endl;
+            throw std::system_error(connection.error(), "accept");
         }
+
+        handleConnection(*connection);
     }
 
     return 0;
